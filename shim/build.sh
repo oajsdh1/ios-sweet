@@ -24,12 +24,14 @@ $OBJCOPY -O binary out/shim.elf out/Image
 size=$(aarch64-linux-gnu-nm out/shim.elf | awk '$3=="_end"{print $1}')
 size=$((16#${size:-0}))
 truncate -s "$size" out/Image
-# Ramdisk: an xnu payload (tools/mkpayload.py) if given as $1, else an empty
-# newc cpio (ABL dislikes a zero-size ramdisk on some builds) -> diagnostics.
+# Ramdisk: an xnu payload (tools/mkpayload.py) if given as $1, else the
+# 5-byte stub (probe/diagnostics path; the ABL takes it fine and patches
+# initrd into /chosen).
 if [ -n "${1:-}" ]; then
-	cp "$1" out/ramdisk.bin
+	RD=out/ramdisk.bin
+	cp "$1" "$RD"
 else
-	(cd out && rm -rf rd && mkdir rd && cd rd && find . | cpio -o -H newc --quiet | gzip -9 > ../ramdisk.bin)
+	RD=../dtb/ramdisk.stub
 fi
 # perseus ABL (MIUI, Android 10 firmware) only hands off when the kernel field
 # carries the device DTB: gzipped Image with the stock perseus.dtb appended
@@ -41,7 +43,7 @@ cat out/Image.gz ../dtb/perseus.dtb > out/kernel.gz.dtb
 # mkbootimg imports a gki module that ships broken. Override with MKBOOTIMG=...
 # if you have a working one on PATH.
 MKBOOTIMG=${MKBOOTIMG:-../tools/mkbootimg.py}
-python3 "$MKBOOTIMG" --header_version 1 --kernel out/kernel.gz.dtb --ramdisk ../dtb/ramdisk.stub \
+python3 "$MKBOOTIMG" --header_version 1 --kernel out/kernel.gz.dtb --ramdisk "$RD" \
 	--pagesize 2048 -o out/shim-boot.img
 # Host render of the console layout.
 gcc -O1 -Wall -o out/host_test console.c host_test.c && ./out/host_test
